@@ -1,0 +1,106 @@
+package botaoAcaoAdicionaProdutoEmMassa;
+
+import br.com.sankhya.extensions.actionbutton.AcaoRotinaJava;
+import br.com.sankhya.extensions.actionbutton.ContextoAcao;
+import br.com.sankhya.extensions.actionbutton.Registro;
+import br.com.sankhya.jape.vo.DynamicVO;
+import br.com.sankhya.jape.wrapper.JapeFactory;
+import br.com.sankhya.jape.wrapper.JapeWrapper;
+import br.com.sankhya.jape.wrapper.fluid.FluidUpdateVO;
+
+import java.math.BigDecimal;
+
+public class excluirProduto implements AcaoRotinaJava {
+    JapeWrapper ItemNotaDAO = JapeFactory.dao("ItemNota");
+    BigDecimal codigoProduto;
+    BigDecimal sequenciaProduto;
+    BigDecimal removerQuantidade;
+    Boolean existeRegistro;
+
+    @Override
+    public void doAction(ContextoAcao contexto) throws Exception {
+        Registro[] linhas = contexto.getLinhas();
+        codigoProduto = new BigDecimal(contexto.getParam("CODPROD").toString());
+        removerQuantidade = new BigDecimal(contexto.getParam("QTDEXCLUIR").toString());
+
+        if (codigoProduto.equals(BigDecimal.ZERO)) {
+            contexto.mostraErro("Não existe produto de código 0. Verifique!");
+        } else {
+            String erros = "";
+
+            for (Registro linha : linhas) {
+                BigDecimal numeroNota = (BigDecimal) linha.getCampo("NUNOTA");
+                BigDecimal quantidadeExistente = verificarExistencia(codigoProduto, numeroNota);
+                sequenciaProduto = obterSequencia(codigoProduto, numeroNota);
+
+                if (quantidadeExistente.compareTo(BigDecimal.ZERO) == 0) {
+                    erros += "Não existe produto com esse código no pedido " + numeroNota + ".\n";
+                } else {
+                    if (removerQuantidade.compareTo(BigDecimal.ZERO) == 0) {
+                        excluirProdutoTotal(numeroNota, sequenciaProduto, codigoProduto);
+                        contexto.setMensagemRetorno("Produto excluído.");
+                    }
+                    else {
+                        atualizarQuantidade(numeroNota, codigoProduto, quantidadeExistente);
+                        contexto.setMensagemRetorno("Alterações realizadas na quantidade do produto.");
+                    }
+                    if (quantidadeExistente.compareTo(removerQuantidade) == 0) {
+                        excluirProdutoTotal(numeroNota, sequenciaProduto, codigoProduto);
+                    }
+                }
+            }
+
+            if (!erros.isEmpty()) {
+                contexto.mostraErro(erros);
+            }
+        }
+    }
+
+    private BigDecimal verificarExistencia(BigDecimal codigoProduto, BigDecimal numeroNota) throws Exception {
+        DynamicVO produtosVO = ItemNotaDAO.findOne("CODPROD = ? AND NUNOTA = ?", codigoProduto, numeroNota);
+        if (produtosVO != null) {
+            existeRegistro = true;
+            return produtosVO.asBigDecimal("QTDNEG");
+        } else {
+            existeRegistro = false;
+            return BigDecimal.ZERO;
+        }
+    }
+
+    private void atualizarQuantidade(BigDecimal numeroNota, BigDecimal codigoProduto, BigDecimal quantidadeExistente) throws Exception {
+        DynamicVO produtoExistenteVO = ItemNotaDAO.findOne("CODPROD = ? AND NUNOTA = ?", codigoProduto, numeroNota);
+        if (produtoExistenteVO != null) {
+            BigDecimal novaQuantidade;
+
+            if (quantidadeExistente.compareTo(removerQuantidade) < 0) {
+                throw new Exception("Quantidade a excluir é maior que a quantidade no pedido.");
+            } else {
+                novaQuantidade = quantidadeExistente.subtract(removerQuantidade);
+                FluidUpdateVO produtoUpdateVO = ItemNotaDAO.prepareToUpdate(produtoExistenteVO);
+                produtoUpdateVO.set("QTDNEG", novaQuantidade);
+                produtoUpdateVO.update();
+            }
+        } else {
+            throw new Exception("Produto não encontrado para atualização.");
+        }
+    }
+
+    private BigDecimal obterSequencia(BigDecimal codigoProduto, BigDecimal numeroNota) throws Exception {
+        DynamicVO produtosVO = ItemNotaDAO.findOne("CODPROD = ? AND NUNOTA = ?", codigoProduto, numeroNota);
+        if (produtosVO != null) {
+            existeRegistro = true;
+            return produtosVO.asBigDecimal("SEQUENCIA");
+        } else {
+            existeRegistro = false;
+            return BigDecimal.ZERO;
+        }
+    }
+
+    private void excluirProdutoTotal(BigDecimal numeroNota, BigDecimal sequenciaProduto, BigDecimal codigoProduto) throws Exception {
+        try {
+            ItemNotaDAO.deleteByCriteria("NUNOTA = ? AND SEQUENCIA = ? AND CODPROD = ?", numeroNota, sequenciaProduto, codigoProduto);
+        } catch (Exception e) {
+            throw new Exception("Erro ao excluir item do pedido " + numeroNota + ": " + e.getMessage());
+        }
+    }
+}
